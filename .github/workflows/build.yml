@@ -46,7 +46,7 @@ jobs:
           prerelease: true
           working_directory: build
           files: |
-            "${{ github.event.repository.name }}-${{ github.ref_name }}.apk"
+            ${{ github.event.repository.name }}-${{ github.ref_name }}.apk
 
       - name: 'Remove keystore'
         if: always()
