@@ -37,7 +37,7 @@ jobs:
               --secret "id=keystore,type=file,src=${{ steps.keystore.outputs.file }}" \
               --secret "id=keystorepass,env=KEYSTORE_PASSWORD" \
               --output type=local,dest=./build .
-          cp build/app-release.apk "build/${{ steps.name.outputs.name }}-${{ github.ref_name }}.apk"
+          cp build/app-release.apk "build/${{ github.event.repository.name }}-${{ github.ref_name }}.apk"
 
       - name: 'Make release'
         uses: softprops/action-gh-release@v3
@@ -46,7 +46,7 @@ jobs:
           prerelease: true
           working_directory: build
           files: |
-            "${{ steps.name.outputs.name }}-${{ github.ref_name }}.apk"
+            "${{ github.event.repository.name }}-${{ github.ref_name }}.apk"
 
       - name: 'Remove keystore'
         if: always()
