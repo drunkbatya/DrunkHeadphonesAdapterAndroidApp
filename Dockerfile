@@ -8,7 +8,7 @@ ENV ANDROID_HOME=/opt/android-sdk
 ENV PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
 
 RUN apt update \
-    && apt install -y --no-install-recommends git unzip \
+    && apt install -y --no-install-recommends git unzip curl wget bash\
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /tmp/cmdline-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
