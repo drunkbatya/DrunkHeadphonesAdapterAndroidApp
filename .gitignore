@@ -1,0 +1,11 @@
+.gradle/
+.kotlin/
+build/
+generated/
+local.properties
+*.keystore
+*.jks
+.idea/
+out/
+*.swp
+*.swo
