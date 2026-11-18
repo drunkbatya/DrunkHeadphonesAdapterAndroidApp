@@ -1,8 +1,14 @@
 package com.drunkbatya.drunkheadphonesadapter
 
+import adapter.AudioStatusRequest
+import adapter.AudioStatusResponse
 import adapter.ErrType
 import adapter.RebootToBootloaderRequest
 import adapter.RpcRequest
+import adapter.SystemStatusRequest
+import adapter.SystemStatusResponse
+import adapter.UsbcStatusRequest
+import adapter.UsbcStatusResponse
 import adapter.VersionRequest
 import adapter.VersionResponse
 import android.app.Application
@@ -32,6 +38,7 @@ private const val CONNECT_TIMEOUT_MS = 1000L
 private const val REQUEST_TIMEOUT_MS = 1000L
 private const val REBOOT_TIMEOUT_MS = 10000L
 private const val DEVICE_LIST_POLL_MS = 100L
+private const val STATUS_POLL_MS = 1000L
 
 enum class ConnectionState(@param:StringRes val label: Int) {
   Disconnected(R.string.connection_disconnected),
@@ -43,7 +50,18 @@ enum class ConnectionState(@param:StringRes val label: Int) {
 data class AdapterState(
   val connection: ConnectionState = ConnectionState.Disconnected,
   val firmware: VersionResponse? = null,
+  val system: SystemMetrics? = null,
+  val audio: AudioStatusResponse? = null,
+  val usbc: UsbcStatusResponse? = null,
 )
+
+enum class StatusSource(val request: RpcRequest) {
+  System(RpcRequest(system_status = SystemStatusRequest())),
+  Audio(RpcRequest(audio_status = AudioStatusRequest())),
+  Usbc(RpcRequest(usbc_status = UsbcStatusRequest())),
+}
+
+data class ConnectionError(@param:StringRes val title: Int, val reason: String)
 
 sealed interface UpdateState {
   data class Confirm(val image: FirmwareImage) : UpdateState
@@ -59,13 +77,18 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
   val state: StateFlow<AdapterState> = mutableState
   private val mutableUpdateState = MutableStateFlow<UpdateState?>(null)
   val updateState: StateFlow<UpdateState?> = mutableUpdateState
+  private val mutableConnectionError = MutableStateFlow<ConnectionError?>(null)
+  val connectionError: StateFlow<ConnectionError?> = mutableConnectionError
   private var adapterLink: AdapterLink? = null
   private var bootloaderDevice: UsbDevice? = null
+  private var isAppVisible = false
 
   private val detachReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
       val device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-      if (device == adapterLink?.device || device == bootloaderDevice) disconnect()
+      if (device != null && (device == adapterLink?.device || device == bootloaderDevice)) {
+        disconnectWithError("${device.deviceName} detached")
+      }
     }
   }
 
@@ -75,17 +98,46 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
       IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED),
       Context.RECEIVER_NOT_EXPORTED,
     )
-    connect()
   }
 
-  fun connect() {
-    if (mutableState.value.connection != ConnectionState.Disconnected) return
+  fun connect() = connect(isNotFoundReported = true)
+
+  fun onAppVisible() {
+    isAppVisible = true
+    connect(isNotFoundReported = false)
+  }
+
+  fun onAppHidden() {
+    isAppVisible = false
+    if (!isUpdateRunning()) disconnect()
+  }
+
+  private fun isUpdateRunning(): Boolean {
+    val update = mutableUpdateState.value
+    return update is UpdateState.Writing || update is UpdateState.Rebooting
+  }
+
+  fun dismissConnectionError() {
+    mutableConnectionError.value = null
+  }
+
+  private fun connect(isNotFoundReported: Boolean) {
+    if (mutableState.value.connection != ConnectionState.Disconnected || isUpdateRunning()) return
     viewModelScope.launch {
       val adapterDevice = findAdapterDevice(usbManager)
       val bootloader = findBootloaderDevice(usbManager)
       when {
         adapterDevice != null -> connectAdapter(adapterDevice)
         bootloader != null -> connectBootloader(bootloader)
+        isNotFoundReported -> reportConnectionError(
+          R.string.connect_failed,
+          "Adapter %04X:%04X and bootloader %04X:%04X not found".format(
+            ADAPTER_VENDOR_ID,
+            ADAPTER_PRODUCT_ID,
+            BOOTLOADER_VENDOR_ID,
+            BOOTLOADER_PRODUCT_ID,
+          ),
+        )
       }
     }
   }
@@ -134,6 +186,7 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
         val version = awaitRestartedAdapter(dfuDevice)
         check(version == image.version) { "Adapter reports version $version, expected ${image.version}" }
         mutableUpdateState.value = UpdateState.Done(version)
+        if (!isAppVisible) disconnect()
       } catch (e: Exception) {
         Log.e(TAG, "Update failed: ${e.message}")
         disconnect()
@@ -142,24 +195,68 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
+  suspend fun pollStatus(source: StatusSource) {
+    val link = adapterLink ?: return
+    var previousSystemStatus: SystemStatusResponse? = null
+    try {
+      while (adapterLink === link) {
+        val response = withTimeout(REQUEST_TIMEOUT_MS) { link.request(source.request) }
+        if (adapterLink !== link) return
+        val state = mutableState.value
+        val system = response.system_status
+        mutableState.value = when {
+          system != null -> state.copy(system = systemMetrics(system, previousSystemStatus))
+          response.audio_status != null -> state.copy(audio = response.audio_status)
+          response.usbc_status != null -> state.copy(usbc = response.usbc_status)
+          else -> {
+            Log.e(TAG, "${source.name} status request to ${link.device.deviceName}: ${response.generic?.err_type}")
+            return
+          }
+        }
+        previousSystemStatus = system
+        delay(STATUS_POLL_MS)
+      }
+    } catch (e: TimeoutCancellationException) {
+      if (adapterLink !== link) return
+      disconnectWithError("${source.name} status request to ${link.device.deviceName}: no response in $REQUEST_TIMEOUT_MS ms")
+    } catch (e: IOException) {
+      if (adapterLink !== link) return
+      disconnectWithError("${source.name} status request to ${link.device.deviceName}: ${e.message}")
+    }
+  }
+
+  private fun disconnectWithError(reason: String) {
+    disconnect()
+    reportConnectionError(R.string.adapter_disconnected, reason)
+  }
+
+  private fun reportConnectionError(@StringRes title: Int, reason: String) {
+    Log.e(TAG, reason)
+    if (mutableUpdateState.value == null) mutableConnectionError.value = ConnectionError(title, reason)
+  }
+
   private suspend fun connectAdapter(device: UsbDevice): VersionResponse? {
     mutableState.value = AdapterState(ConnectionState.Connecting)
     if (!requestUsbPermission(getApplication(), usbManager, device)) {
       mutableState.value = AdapterState()
+      reportConnectionError(R.string.connect_failed, "USB permission for ${device.deviceName} denied")
       return null
     }
     return try {
-      withTimeout(CONNECT_TIMEOUT_MS) {
-        val link = AdapterLink.open(usbManager, device)
-        adapterLink = link
-        val firmware = link.request(RpcRequest(version = VersionRequest())).version
-          ?: error("Version request to ${device.deviceName}: response without version")
-        mutableState.value = AdapterState(ConnectionState.Connected, firmware)
-        firmware
+      val link = AdapterLink.open(usbManager, device)
+      adapterLink = link
+      val response = try {
+        withTimeout(CONNECT_TIMEOUT_MS) { link.request(RpcRequest(version = VersionRequest())) }
+      } catch (e: TimeoutCancellationException) {
+        throw IOException("Version request to ${device.deviceName}: no response in $CONNECT_TIMEOUT_MS ms")
       }
-    } catch (e: Exception) {
-      Log.e(TAG, "Connect ${device.deviceName} failed: ${e.message}")
+      val firmware = response.version
+        ?: throw IOException("Version request to ${device.deviceName}: ${response.generic?.err_type}")
+      mutableState.value = AdapterState(ConnectionState.Connected, firmware)
+      firmware
+    } catch (e: IOException) {
       disconnect()
+      reportConnectionError(R.string.connect_failed, e.message.orEmpty())
       null
     }
   }
@@ -168,6 +265,7 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
     mutableState.value = AdapterState(ConnectionState.Connecting)
     if (!requestUsbPermission(getApplication(), usbManager, device)) {
       mutableState.value = AdapterState()
+      reportConnectionError(R.string.connect_failed, "USB permission for ${device.deviceName} denied")
       return
     }
     bootloaderDevice = device

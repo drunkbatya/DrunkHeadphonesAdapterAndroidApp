@@ -2,6 +2,8 @@ package com.drunkbatya.drunkheadphonesadapter
 
 import adapter.VersionResponse
 import android.net.Uri
+import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -13,18 +15,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -35,42 +35,75 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 
+private enum class AppTab(@param:StringRes val label: Int, @param:DrawableRes val icon: Int, val statusSource: StatusSource?) {
+  Adapter(R.string.tab_adapter, R.drawable.ic_board, null),
+  Audio(R.string.tab_audio, R.drawable.ic_headphones, StatusSource.Audio),
+  Power(R.string.tab_power, R.drawable.ic_power, StatusSource.Usbc),
+  System(R.string.tab_system, R.drawable.ic_chip, StatusSource.System),
+}
+
 @Composable
 fun AppScreen(
   state: AdapterState,
   update: UpdateState?,
+  connectionError: ConnectionError?,
   onConnect: () -> Unit,
   onDisconnect: () -> Unit,
+  onPollStatus: suspend (StatusSource) -> Unit,
   onFirmwareFile: (Uri) -> Unit,
   onConfirmUpdate: (FirmwareImage) -> Unit,
   onDismissUpdate: () -> Unit,
+  onDismissConnectionError: () -> Unit,
 ) {
   UpdateDialogs(update, state.firmware?.version, onConfirmUpdate, onDismissUpdate)
+  connectionError?.let { MessageDialog(stringResource(it.title), it.reason, onDismissConnectionError) }
   var isDeviceInfoOpen by rememberSaveable { mutableStateOf(false) }
+  var openedPowerPort by rememberSaveable { mutableStateOf<PowerPort?>(null) }
+  var selectedTab by rememberSaveable { mutableStateOf(AppTab.Adapter) }
+  val statusSource = when {
+    isDeviceInfoOpen -> null
+    openedPowerPort != null -> StatusSource.Usbc
+    else -> selectedTab.statusSource
+  }
+  if (statusSource != null && state.connection == ConnectionState.Connected && update == null) {
+    LaunchedEffect(statusSource) { onPollStatus(statusSource) }
+  }
   if (isDeviceInfoOpen) {
     DeviceInfoScreen(state.firmware, onBack = { isDeviceInfoOpen = false })
+    return
+  }
+  openedPowerPort?.let { powerPort ->
+    PowerPortScreen(powerPort, state.usbc, onBack = { openedPowerPort = null })
     return
   }
   Scaffold(
     bottomBar = {
       NavigationBar {
-        NavigationBarItem(
-          selected = true,
-          onClick = {},
-          icon = { Icon(painterResource(R.drawable.ic_chip), contentDescription = null) },
-          label = { Text(stringResource(state.connection.label)) },
-        )
+        AppTab.entries.forEach { tab ->
+          NavigationBarItem(
+            selected = tab == selectedTab,
+            onClick = { selectedTab = tab },
+            icon = { Icon(painterResource(tab.icon), contentDescription = null) },
+            label = { Text(stringResource(tab.label)) },
+          )
+        }
       }
     },
   ) { padding ->
-    BoardTab(
-      state = state,
-      onConnect = onConnect,
-      onDisconnect = onDisconnect,
-      onDeviceInfo = { isDeviceInfoOpen = true },
-      onFirmwareFile = onFirmwareFile,
-      modifier = Modifier.padding(padding),
-    )
+    val tabModifier = Modifier.padding(padding)
+    when (selectedTab) {
+      AppTab.Adapter -> BoardTab(
+        state = state,
+        onConnect = onConnect,
+        onDisconnect = onDisconnect,
+        onDeviceInfo = { isDeviceInfoOpen = true },
+        onFirmwareFile = onFirmwareFile,
+        modifier = tabModifier,
+      )
+      AppTab.Audio -> AudioTab(state.audio, tabModifier)
+      AppTab.Power -> PowerTab(state.usbc, onPortClick = { openedPowerPort = it }, modifier = tabModifier)
+      AppTab.System -> SystemTab(state.system, tabModifier)
+    }
   }
 }
 
@@ -95,6 +128,7 @@ private fun BoardTab(
     }
     ConnectionButton(state.connection, onConnect, onDisconnect)
     DeviceInfoCard(
+      connection = state.connection,
       firmware = state.firmware,
       isUpdateAvailable = state.connection == ConnectionState.Connected ||
         state.connection == ConnectionState.Bootloader,
@@ -122,6 +156,7 @@ private fun ConnectionButton(connection: ConnectionState, onConnect: () -> Unit,
 
 @Composable
 private fun DeviceInfoCard(
+  connection: ConnectionState,
   firmware: VersionResponse?,
   isUpdateAvailable: Boolean,
   onClick: () -> Unit,
@@ -130,43 +165,17 @@ private fun DeviceInfoCard(
   val firmwareFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
     if (uri != null) onFirmwareFile(uri)
   }
-  Surface(
-    onClick = onClick,
-    shape = RoundedCornerShape(16.dp),
-    color = MaterialTheme.colorScheme.surfaceContainer,
-    modifier = Modifier.fillMaxWidth(),
-  ) {
-    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-          stringResource(R.string.device_info),
-          style = MaterialTheme.typography.titleMedium,
-          modifier = Modifier.weight(1f),
-        )
-        Icon(painterResource(R.drawable.ic_chevron_right), contentDescription = null)
+  Section(stringResource(R.string.device_info), onClick = onClick) {
+    InfoRow(stringResource(R.string.connection), stringResource(connection.label))
+    InfoRow(stringResource(R.string.firmware_version), firmware?.version)
+    InfoRow(stringResource(R.string.build_date), firmware?.build_date)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
+        Text(stringResource(R.string.update))
       }
-      InfoRow(stringResource(R.string.firmware_version), firmware?.version)
-      InfoRow(stringResource(R.string.build_date), firmware?.build_date)
-      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
-          Text(stringResource(R.string.update))
-        }
-        FilledTonalIconButton(onClick = { firmwareFilePicker.launch(arrayOf("*/*")) }, enabled = isUpdateAvailable) {
-          Icon(painterResource(R.drawable.ic_file), contentDescription = stringResource(R.string.update_select_file))
-        }
+      FilledTonalIconButton(onClick = { firmwareFilePicker.launch(arrayOf("*/*")) }, enabled = isUpdateAvailable) {
+        Icon(painterResource(R.drawable.ic_file), contentDescription = stringResource(R.string.update_select_file))
       }
     }
-  }
-}
-
-@Composable
-fun InfoRow(label: String, value: String?) {
-  Row(Modifier.fillMaxWidth()) {
-    Text(
-      label,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      modifier = Modifier.weight(1f),
-    )
-    Text(value?.takeUnless { it.isBlank() } ?: stringResource(R.string.value_unknown))
   }
 }

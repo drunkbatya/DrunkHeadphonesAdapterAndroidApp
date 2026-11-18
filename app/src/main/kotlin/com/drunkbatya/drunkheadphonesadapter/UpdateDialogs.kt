@@ -88,7 +88,7 @@ private fun ProgressDialog(indicator: @Composable () -> Unit) {
 }
 
 @Composable
-private fun MessageDialog(title: String, text: String, onDismiss: () -> Unit) {
+fun MessageDialog(title: String, text: String, onDismiss: () -> Unit) {
   AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(title) },

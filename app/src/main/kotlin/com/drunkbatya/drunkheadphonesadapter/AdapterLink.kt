@@ -25,8 +25,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-private const val ADAPTER_VENDOR_ID = 0x1209
-private const val ADAPTER_PRODUCT_ID = 0x0001
+const val ADAPTER_VENDOR_ID = 0x1209
+const val ADAPTER_PRODUCT_ID = 0x0001
 private const val ADAPTER_PRODUCT_NAME = "DrunkHeadphonesAdapter"
 private const val ACTION_USB_PERMISSION = "com.drunkbatya.drunkheadphonesadapter.USB_PERMISSION"
 private const val WRITE_TIMEOUT_MS = 100

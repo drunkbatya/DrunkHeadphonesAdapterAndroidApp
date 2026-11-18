@@ -10,8 +10,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlinx.coroutines.delay
 
-private const val BOOTLOADER_VENDOR_ID = 0x0483
-private const val BOOTLOADER_PRODUCT_ID = 0xDF11
+const val BOOTLOADER_VENDOR_ID = 0x0483
+const val BOOTLOADER_PRODUCT_ID = 0xDF11
 private const val DFU_INTERFACE_CLASS = 0xFE
 private const val DFU_FUNCTIONAL_DESCRIPTOR_TYPE = 0x21
 private const val DFU_FUNCTIONAL_DESCRIPTOR_TRANSFER_SIZE_OFFSET = 5
