@@ -40,7 +40,7 @@ fun AudioTab(
         audio?.let { stringResource(if (it.headphone_output_powered) R.string.on else R.string.off) },
       )
     }
-    settings?.let { SettingsSection(it, settingsSaving, onSpeakerVolumeOffset, onSaveSettings) }
+    SettingsSection(settings, settingsSaving, onSpeakerVolumeOffset, onSaveSettings)
     StreamSection(stringResource(R.string.section_playback), audio?.speaker)
     StreamSection(stringResource(R.string.section_microphone), audio?.mic)
   }
@@ -48,15 +48,16 @@ fun AudioTab(
 
 @Composable
 private fun SettingsSection(
-  settings: Settings,
+  settings: Settings?,
   saving: Boolean,
   onSpeakerVolumeOffset: (Int) -> Unit,
   onSave: () -> Unit,
 ) {
-  val offset = settings.speaker_volume_offset ?: 0
+  val offset = settings?.speaker_volume_offset ?: 0
   Section(stringResource(R.string.section_settings)) {
-    InfoRow(stringResource(R.string.volume_offset), formatVolumeOffset(offset))
+    InfoRow(stringResource(R.string.volume_offset), settings?.let { formatVolumeOffset(offset) })
     Slider(
+      enabled = settings != null,
       value = offset.toFloat(),
       onValueChange = { value ->
         val steps = value.roundToInt()
@@ -65,7 +66,7 @@ private fun SettingsSection(
       valueRange = -SPEAKER_VOLUME_OFFSET_MAX_STEPS.toFloat()..SPEAKER_VOLUME_OFFSET_MAX_STEPS.toFloat(),
       steps = 2 * SPEAKER_VOLUME_OFFSET_MAX_STEPS - 1,
     )
-    Button(onClick = onSave, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
+    Button(onClick = onSave, enabled = settings != null && !saving, modifier = Modifier.fillMaxWidth()) {
       Text(stringResource(if (saving) R.string.settings_saving else R.string.settings_save))
     }
   }
