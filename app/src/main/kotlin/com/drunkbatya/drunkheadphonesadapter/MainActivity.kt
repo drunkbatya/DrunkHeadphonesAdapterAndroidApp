@@ -18,6 +18,7 @@ class MainActivity : ComponentActivity() {
       val state by adapter.state.collectAsState()
       val update by adapter.updateState.collectAsState()
       val connectionError by adapter.connectionError.collectAsState()
+      val settingsSaveError by adapter.settingsSaveError.collectAsState()
       AppTheme {
         AppScreen(
           state = state,
@@ -26,6 +27,10 @@ class MainActivity : ComponentActivity() {
           onConnect = adapter::connect,
           onDisconnect = adapter::disconnect,
           onPollStatus = adapter::pollStatus,
+          settingsSaveError = settingsSaveError,
+          onSpeakerVolumeOffset = adapter::setSpeakerVolumeOffset,
+          onSaveSettings = adapter::saveSettings,
+          onDismissSettingsSaveError = adapter::dismissSettingsSaveError,
           onFirmwareFile = adapter::selectFirmwareFile,
           onConfirmUpdate = adapter::startUpdate,
           onDismissUpdate = adapter::dismissUpdate,

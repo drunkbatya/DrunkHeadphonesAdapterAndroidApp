@@ -43,6 +43,13 @@
     <string name="section_headphones">Headphones</string>
     <string name="headphones_plugged">Plugged</string>
     <string name="headphones_output">Output</string>
+    <string name="headset_mic">Headset mic</string>
+    <string name="section_settings">Settings</string>
+    <string name="volume_offset">Volume offset</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_saving">Saving</string>
+    <string name="settings_saved">Settings saved</string>
+    <string name="settings_save_failed">Settings save failed</string>
     <string name="section_playback">Playback</string>
     <string name="section_microphone">Microphone</string>
     <string name="stream">Stream</string>

@@ -18,6 +18,8 @@ fun formatVolume(volumeDbX256: Int): String {
   return "${decibels.stripTrailingZeros().toPlainString()} dB"
 }
 
+fun formatVolumeOffset(steps: Int): String = if (steps > 0) "+$steps" else "$steps"
+
 fun formatSampleFormat(sampleRateHz: Int, sampleBits: Int): String = "${formatThousandths(sampleRateHz)} kHz, $sampleBits bit"
 
 fun formatFrequency(frequencyHz: Int): String = "${formatThousandths(frequencyHz / 1000)} MHz"

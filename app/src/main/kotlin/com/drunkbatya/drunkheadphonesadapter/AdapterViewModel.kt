@@ -5,6 +5,11 @@ import adapter.AudioStatusResponse
 import adapter.ErrType
 import adapter.RebootToBootloaderRequest
 import adapter.RpcRequest
+import adapter.Settings
+import adapter.SettingsGetRequest
+import adapter.SettingsSaveRequest
+import adapter.SettingsSaveResult
+import adapter.SettingsSetRequest
 import adapter.SystemStatusRequest
 import adapter.SystemStatusResponse
 import adapter.UsbcStatusRequest
@@ -20,6 +25,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.util.Log
+import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -29,6 +35,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -37,6 +44,7 @@ private const val TAG = "Adapter"
 private const val CONNECT_TIMEOUT_MS = 1000L
 private const val REQUEST_TIMEOUT_MS = 1000L
 private const val REBOOT_TIMEOUT_MS = 10000L
+private const val SETTINGS_SAVE_TIMEOUT_MS = 3000L
 private const val DEVICE_LIST_POLL_MS = 100L
 private const val STATUS_POLL_MS = 1000L
 
@@ -53,6 +61,8 @@ data class AdapterState(
   val system: SystemMetrics? = null,
   val audio: AudioStatusResponse? = null,
   val usbc: UsbcStatusResponse? = null,
+  val settings: Settings? = null,
+  val settingsSaving: Boolean = false,
 )
 
 enum class StatusSource(val request: RpcRequest) {
@@ -79,9 +89,12 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
   val updateState: StateFlow<UpdateState?> = mutableUpdateState
   private val mutableConnectionError = MutableStateFlow<ConnectionError?>(null)
   val connectionError: StateFlow<ConnectionError?> = mutableConnectionError
+  private val mutableSettingsSaveError = MutableStateFlow<String?>(null)
+  val settingsSaveError: StateFlow<String?> = mutableSettingsSaveError
   private var adapterLink: AdapterLink? = null
   private var bootloaderDevice: UsbDevice? = null
   private var isAppVisible = false
+  private val speakerVolumeOffsetRequest = MutableStateFlow<Int?>(null)
 
   private val detachReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -98,6 +111,9 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
       IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED),
       Context.RECEIVER_NOT_EXPORTED,
     )
+    viewModelScope.launch {
+      speakerVolumeOffsetRequest.filterNotNull().collect { sendSpeakerVolumeOffset(it) }
+    }
   }
 
   fun connect() = connect(isNotFoundReported = true)
@@ -119,6 +135,10 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
 
   fun dismissConnectionError() {
     mutableConnectionError.value = null
+  }
+
+  fun dismissSettingsSaveError() {
+    mutableSettingsSaveError.value = null
   }
 
   private fun connect(isNotFoundReported: Boolean) {
@@ -146,7 +166,81 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
     adapterLink?.close()
     adapterLink = null
     bootloaderDevice = null
+    speakerVolumeOffsetRequest.value = null
     mutableState.value = AdapterState()
+  }
+
+  fun setSpeakerVolumeOffset(offset: Int) {
+    val state = mutableState.value
+    val settings = state.settings ?: return
+    mutableState.value = state.copy(settings = settings.copy(speaker_volume_offset = offset))
+    speakerVolumeOffsetRequest.value = offset
+  }
+
+  private suspend fun sendSpeakerVolumeOffset(offset: Int) {
+    val link = adapterLink ?: return
+    val request = RpcRequest(settings_set = SettingsSetRequest(Settings(speaker_volume_offset = offset)))
+    try {
+      val response = withTimeout(REQUEST_TIMEOUT_MS) { link.request(request) }
+      if (adapterLink !== link) return
+      val settings = response.settings_set?.settings
+      if (settings == null) {
+        Log.e(TAG, "Settings set request to ${link.device.deviceName}: ${response.generic?.err_type}")
+        return
+      }
+      if (speakerVolumeOffsetRequest.value == offset) mutableState.value = mutableState.value.copy(settings = settings)
+    } catch (e: TimeoutCancellationException) {
+      if (adapterLink !== link) return
+      disconnectWithError("Settings set request to ${link.device.deviceName}: no response in $REQUEST_TIMEOUT_MS ms")
+    } catch (e: IOException) {
+      if (adapterLink !== link) return
+      disconnectWithError("Settings set request to ${link.device.deviceName}: ${e.message}")
+    }
+  }
+
+  fun saveSettings() {
+    val link = adapterLink ?: return
+    val settings = mutableState.value.settings ?: return
+    if (mutableState.value.settingsSaving) return
+    mutableState.value = mutableState.value.copy(settingsSaving = true)
+    viewModelScope.launch {
+      val error = try {
+        withTimeout(SETTINGS_SAVE_TIMEOUT_MS) {
+          val setResponse = link.request(RpcRequest(settings_set = SettingsSetRequest(settings)))
+          if (setResponse.settings_set?.settings == null) {
+            "Settings set request to ${link.device.deviceName}: ${setResponse.generic?.err_type}"
+          } else {
+            val result = link.request(RpcRequest(settings_save = SettingsSaveRequest())).settings_save?.result
+            if (result == SettingsSaveResult.SETTINGS_SAVE_RESULT_OK) null else "$result"
+          }
+        }
+      } catch (e: TimeoutCancellationException) {
+        "Settings save request to ${link.device.deviceName}: no response in $SETTINGS_SAVE_TIMEOUT_MS ms"
+      } catch (e: IOException) {
+        "Settings save request to ${link.device.deviceName}: ${e.message}"
+      }
+      if (adapterLink !== link) return@launch
+      mutableState.value = mutableState.value.copy(settingsSaving = false)
+      if (error == null) {
+        Toast.makeText(getApplication(), R.string.settings_saved, Toast.LENGTH_SHORT).show()
+      } else {
+        Log.e(TAG, error)
+        mutableSettingsSaveError.value = error
+      }
+    }
+  }
+
+  private suspend fun requestSettings(link: AdapterLink): Settings? {
+    val response = try {
+      withTimeout(REQUEST_TIMEOUT_MS) { link.request(RpcRequest(settings_get = SettingsGetRequest())) }
+    } catch (e: TimeoutCancellationException) {
+      throw IOException("Settings request to ${link.device.deviceName}: no response in $REQUEST_TIMEOUT_MS ms")
+    }
+    val settings = response.settings_get?.settings
+    if (settings == null) {
+      Log.e(TAG, "Settings request to ${link.device.deviceName}: ${response.generic?.err_type}")
+    }
+    return settings
   }
 
   fun selectFirmwareFile(uri: Uri) {
@@ -252,7 +346,8 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
       }
       val firmware = response.version
         ?: throw IOException("Version request to ${device.deviceName}: ${response.generic?.err_type}")
-      mutableState.value = AdapterState(ConnectionState.Connected, firmware)
+      val settings = requestSettings(link)
+      mutableState.value = AdapterState(ConnectionState.Connected, firmware, settings = settings)
       firmware
     } catch (e: IOException) {
       disconnect()

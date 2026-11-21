@@ -50,6 +50,10 @@ fun AppScreen(
   onConnect: () -> Unit,
   onDisconnect: () -> Unit,
   onPollStatus: suspend (StatusSource) -> Unit,
+  settingsSaveError: String?,
+  onSpeakerVolumeOffset: (Int) -> Unit,
+  onSaveSettings: () -> Unit,
+  onDismissSettingsSaveError: () -> Unit,
   onFirmwareFile: (Uri) -> Unit,
   onConfirmUpdate: (FirmwareImage) -> Unit,
   onDismissUpdate: () -> Unit,
@@ -57,6 +61,9 @@ fun AppScreen(
 ) {
   UpdateDialogs(update, state.firmware?.version, onConfirmUpdate, onDismissUpdate)
   connectionError?.let { MessageDialog(stringResource(it.title), it.reason, onDismissConnectionError) }
+  settingsSaveError?.let {
+    MessageDialog(stringResource(R.string.settings_save_failed), it, onDismissSettingsSaveError)
+  }
   var isDeviceInfoOpen by rememberSaveable { mutableStateOf(false) }
   var openedPowerPort by rememberSaveable { mutableStateOf<PowerPort?>(null) }
   var selectedTab by rememberSaveable { mutableStateOf(AppTab.Adapter) }
@@ -100,7 +107,14 @@ fun AppScreen(
         onFirmwareFile = onFirmwareFile,
         modifier = tabModifier,
       )
-      AppTab.Audio -> AudioTab(state.audio, tabModifier)
+      AppTab.Audio -> AudioTab(
+        state.audio,
+        state.settings,
+        state.settingsSaving,
+        onSpeakerVolumeOffset,
+        onSaveSettings,
+        tabModifier,
+      )
       AppTab.Power -> PowerTab(state.usbc, onPortClick = { openedPowerPort = it }, modifier = tabModifier)
       AppTab.System -> SystemTab(state.system, tabModifier)
     }

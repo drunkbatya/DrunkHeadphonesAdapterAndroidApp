@@ -2,12 +2,27 @@ package com.drunkbatya.drunkheadphonesadapter
 
 import adapter.AudioStatusResponse
 import adapter.AudioStreamStatus
+import adapter.Settings
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Button
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import kotlin.math.roundToInt
+
+private const val SPEAKER_VOLUME_OFFSET_MAX_STEPS = 20
 
 @Composable
-fun AudioTab(audio: AudioStatusResponse?, modifier: Modifier = Modifier) {
+fun AudioTab(
+  audio: AudioStatusResponse?,
+  settings: Settings?,
+  settingsSaving: Boolean,
+  onSpeakerVolumeOffset: (Int) -> Unit,
+  onSaveSettings: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
   StatusColumn(modifier) {
     Section(stringResource(R.string.section_headphones)) {
       InfoRow(
@@ -15,12 +30,44 @@ fun AudioTab(audio: AudioStatusResponse?, modifier: Modifier = Modifier) {
         audio?.let { stringResource(if (it.headphone_plugged) R.string.yes else R.string.no) },
       )
       InfoRow(
+        stringResource(R.string.headset_mic),
+        audio?.takeIf { it.headphone_plugged }?.let {
+          stringResource(if (it.headset_mic_present) R.string.yes else R.string.no)
+        },
+      )
+      InfoRow(
         stringResource(R.string.headphones_output),
         audio?.let { stringResource(if (it.headphone_output_powered) R.string.on else R.string.off) },
       )
     }
+    settings?.let { SettingsSection(it, settingsSaving, onSpeakerVolumeOffset, onSaveSettings) }
     StreamSection(stringResource(R.string.section_playback), audio?.speaker)
     StreamSection(stringResource(R.string.section_microphone), audio?.mic)
+  }
+}
+
+@Composable
+private fun SettingsSection(
+  settings: Settings,
+  saving: Boolean,
+  onSpeakerVolumeOffset: (Int) -> Unit,
+  onSave: () -> Unit,
+) {
+  val offset = settings.speaker_volume_offset ?: 0
+  Section(stringResource(R.string.section_settings)) {
+    InfoRow(stringResource(R.string.volume_offset), formatVolumeOffset(offset))
+    Slider(
+      value = offset.toFloat(),
+      onValueChange = { value ->
+        val steps = value.roundToInt()
+        if (steps != offset) onSpeakerVolumeOffset(steps)
+      },
+      valueRange = -SPEAKER_VOLUME_OFFSET_MAX_STEPS.toFloat()..SPEAKER_VOLUME_OFFSET_MAX_STEPS.toFloat(),
+      steps = 2 * SPEAKER_VOLUME_OFFSET_MAX_STEPS - 1,
+    )
+    Button(onClick = onSave, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
+      Text(stringResource(if (saving) R.string.settings_saving else R.string.settings_save))
+    }
   }
 }
 
