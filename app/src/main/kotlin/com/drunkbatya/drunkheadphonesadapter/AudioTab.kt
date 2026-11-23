@@ -13,6 +13,9 @@ import androidx.compose.ui.res.stringResource
 import kotlin.math.roundToInt
 
 private const val SPEAKER_VOLUME_OFFSET_MAX_STEPS = 20
+private const val MIC_GAIN_MAX_STEPS = 10
+private const val MIC_GAIN_STEP_DB = 3
+private const val MIC_GAIN_BASE_DB = 6
 
 @Composable
 fun AudioTab(
@@ -20,6 +23,7 @@ fun AudioTab(
   settings: Settings?,
   settingsSaving: Boolean,
   onSpeakerVolumeOffset: (Int) -> Unit,
+  onMicGain: (Int) -> Unit,
   onSaveSettings: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -40,7 +44,7 @@ fun AudioTab(
         audio?.let { stringResource(if (it.headphone_output_powered) R.string.on else R.string.off) },
       )
     }
-    SettingsSection(settings, settingsSaving, onSpeakerVolumeOffset, onSaveSettings)
+    SettingsSection(settings, settingsSaving, onSpeakerVolumeOffset, onMicGain, onSaveSettings)
     StreamSection(stringResource(R.string.section_playback), audio?.speaker)
     StreamSection(stringResource(R.string.section_microphone), audio?.mic)
   }
@@ -51,9 +55,11 @@ private fun SettingsSection(
   settings: Settings?,
   saving: Boolean,
   onSpeakerVolumeOffset: (Int) -> Unit,
+  onMicGain: (Int) -> Unit,
   onSave: () -> Unit,
 ) {
   val offset = settings?.speaker_volume_offset ?: 0
+  val micGain = settings?.mic_gain
   Section(stringResource(R.string.section_settings)) {
     InfoRow(stringResource(R.string.volume_offset), settings?.let { formatVolumeOffset(offset) })
     Slider(
@@ -65,6 +71,17 @@ private fun SettingsSection(
       },
       valueRange = -SPEAKER_VOLUME_OFFSET_MAX_STEPS.toFloat()..SPEAKER_VOLUME_OFFSET_MAX_STEPS.toFloat(),
       steps = 2 * SPEAKER_VOLUME_OFFSET_MAX_STEPS - 1,
+    )
+    InfoRow(stringResource(R.string.mic_gain), micGain?.let { formatMicGain(MIC_GAIN_BASE_DB + it * MIC_GAIN_STEP_DB) })
+    Slider(
+      enabled = micGain != null,
+      value = (micGain ?: 0).toFloat(),
+      onValueChange = { value ->
+        val steps = value.roundToInt()
+        if (steps != micGain) onMicGain(steps)
+      },
+      valueRange = 0f..MIC_GAIN_MAX_STEPS.toFloat(),
+      steps = MIC_GAIN_MAX_STEPS - 1,
     )
     Button(onClick = onSave, enabled = settings != null && !saving, modifier = Modifier.fillMaxWidth()) {
       Text(stringResource(if (saving) R.string.settings_saving else R.string.settings_save))

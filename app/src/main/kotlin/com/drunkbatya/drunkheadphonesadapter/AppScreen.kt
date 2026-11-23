@@ -52,6 +52,7 @@ fun AppScreen(
   onPollStatus: suspend (StatusSource) -> Unit,
   settingsSaveError: String?,
   onSpeakerVolumeOffset: (Int) -> Unit,
+  onMicGain: (Int) -> Unit,
   onSaveSettings: () -> Unit,
   onDismissSettingsSaveError: () -> Unit,
   onFirmwareFile: (Uri) -> Unit,
@@ -112,6 +113,7 @@ fun AppScreen(
         state.settings,
         state.settingsSaving,
         onSpeakerVolumeOffset,
+        onMicGain,
         onSaveSettings,
         tabModifier,
       )

@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
           onPollStatus = adapter::pollStatus,
           settingsSaveError = settingsSaveError,
           onSpeakerVolumeOffset = adapter::setSpeakerVolumeOffset,
+          onMicGain = adapter::setMicGain,
           onSaveSettings = adapter::saveSettings,
           onDismissSettingsSaveError = adapter::dismissSettingsSaveError,
           onFirmwareFile = adapter::selectFirmwareFile,

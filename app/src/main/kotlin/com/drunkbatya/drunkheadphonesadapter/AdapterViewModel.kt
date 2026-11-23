@@ -94,7 +94,7 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
   private var adapterLink: AdapterLink? = null
   private var bootloaderDevice: UsbDevice? = null
   private var isAppVisible = false
-  private val speakerVolumeOffsetRequest = MutableStateFlow<Int?>(null)
+  private val settingsRequest = MutableStateFlow<Settings?>(null)
 
   private val detachReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -112,7 +112,7 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
       Context.RECEIVER_NOT_EXPORTED,
     )
     viewModelScope.launch {
-      speakerVolumeOffsetRequest.filterNotNull().collect { sendSpeakerVolumeOffset(it) }
+      settingsRequest.filterNotNull().collect { sendSettings(it) }
     }
   }
 
@@ -166,20 +166,24 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
     adapterLink?.close()
     adapterLink = null
     bootloaderDevice = null
-    speakerVolumeOffsetRequest.value = null
+    settingsRequest.value = null
     mutableState.value = AdapterState()
   }
 
-  fun setSpeakerVolumeOffset(offset: Int) {
+  fun setSpeakerVolumeOffset(offset: Int) = changeSettings { it.copy(speaker_volume_offset = offset) }
+
+  fun setMicGain(gain: Int) = changeSettings { it.copy(mic_gain = gain) }
+
+  private fun changeSettings(change: (Settings) -> Settings) {
     val state = mutableState.value
-    val settings = state.settings ?: return
-    mutableState.value = state.copy(settings = settings.copy(speaker_volume_offset = offset))
-    speakerVolumeOffsetRequest.value = offset
+    val settings = change(state.settings ?: return)
+    mutableState.value = state.copy(settings = settings)
+    settingsRequest.value = settings
   }
 
-  private suspend fun sendSpeakerVolumeOffset(offset: Int) {
+  private suspend fun sendSettings(requested: Settings) {
     val link = adapterLink ?: return
-    val request = RpcRequest(settings_set = SettingsSetRequest(Settings(speaker_volume_offset = offset)))
+    val request = RpcRequest(settings_set = SettingsSetRequest(requested))
     try {
       val response = withTimeout(REQUEST_TIMEOUT_MS) { link.request(request) }
       if (adapterLink !== link) return
@@ -188,7 +192,7 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
         Log.e(TAG, "Settings set request to ${link.device.deviceName}: ${response.generic?.err_type}")
         return
       }
-      if (speakerVolumeOffsetRequest.value == offset) mutableState.value = mutableState.value.copy(settings = settings)
+      if (settingsRequest.value == requested) mutableState.value = mutableState.value.copy(settings = settings)
     } catch (e: TimeoutCancellationException) {
       if (adapterLink !== link) return
       disconnectWithError("Settings set request to ${link.device.deviceName}: no response in $REQUEST_TIMEOUT_MS ms")
