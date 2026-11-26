@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity() {
       val update by adapter.updateState.collectAsState()
       val connectionError by adapter.connectionError.collectAsState()
       val settingsSaveError by adapter.settingsSaveError.collectAsState()
+      val boardAction by adapter.boardActionState.collectAsState()
       AppTheme {
         AppScreen(
           state = state,
@@ -36,6 +37,10 @@ class MainActivity : ComponentActivity() {
           onConfirmUpdate = adapter::startUpdate,
           onDismissUpdate = adapter::dismissUpdate,
           onDismissConnectionError = adapter::dismissConnectionError,
+          boardAction = boardAction,
+          onBoardAction = adapter::requestBoardAction,
+          onConfirmBoardAction = adapter::startBoardAction,
+          onDismissBoardAction = adapter::dismissBoardAction,
         )
       }
     }

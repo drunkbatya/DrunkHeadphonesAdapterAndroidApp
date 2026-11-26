@@ -8,14 +8,19 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -59,8 +64,13 @@ fun AppScreen(
   onConfirmUpdate: (FirmwareImage) -> Unit,
   onDismissUpdate: () -> Unit,
   onDismissConnectionError: () -> Unit,
+  boardAction: BoardActionState?,
+  onBoardAction: (BoardAction) -> Unit,
+  onConfirmBoardAction: (BoardAction) -> Unit,
+  onDismissBoardAction: () -> Unit,
 ) {
   UpdateDialogs(update, state.firmware?.version, onConfirmUpdate, onDismissUpdate)
+  BoardActionDialogs(boardAction, onConfirmBoardAction, onDismissBoardAction)
   connectionError?.let { MessageDialog(stringResource(it.title), it.reason, onDismissConnectionError) }
   settingsSaveError?.let {
     MessageDialog(stringResource(R.string.settings_save_failed), it, onDismissSettingsSaveError)
@@ -73,7 +83,7 @@ fun AppScreen(
     openedPowerPort != null -> StatusSource.Usbc
     else -> selectedTab.statusSource
   }
-  if (statusSource != null && state.connection == ConnectionState.Connected && update == null) {
+  if (statusSource != null && state.connection == ConnectionState.Connected && update == null && boardAction == null) {
     LaunchedEffect(statusSource) { onPollStatus(statusSource) }
   }
   if (isDeviceInfoOpen) {
@@ -106,6 +116,7 @@ fun AppScreen(
         onDisconnect = onDisconnect,
         onDeviceInfo = { isDeviceInfoOpen = true },
         onFirmwareFile = onFirmwareFile,
+        onBoardAction = onBoardAction,
         modifier = tabModifier,
       )
       AppTab.Audio -> AudioTab(
@@ -130,27 +141,70 @@ private fun BoardTab(
   onDisconnect: () -> Unit,
   onDeviceInfo: () -> Unit,
   onFirmwareFile: (Uri) -> Unit,
+  onBoardAction: (BoardAction) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  Column(
-    modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
-  ) {
-    Box(
-      modifier = Modifier.fillMaxWidth().fillMaxHeight(0.5f).padding(top = 16.dp),
-      contentAlignment = Alignment.Center,
+  val isConnected = state.connection == ConnectionState.Connected
+  val isBootloader = state.connection == ConnectionState.Bootloader
+  BoxWithConstraints(modifier.fillMaxSize()) {
+    val boardHeight = maxHeight / 2
+    Column(
+      modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-      FlippableBoard(Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true))
+      Box(
+        modifier = Modifier.fillMaxWidth().height(boardHeight).padding(top = 16.dp),
+        contentAlignment = Alignment.Center,
+      ) {
+        FlippableBoard(Modifier.fillMaxHeight().aspectRatio(1f, matchHeightConstraintsFirst = true))
+      }
+      ConnectionButton(state.connection, onConnect, onDisconnect)
+      DeviceInfoCard(
+        connection = state.connection,
+        firmware = state.firmware,
+        isUpdateAvailable = isConnected || isBootloader,
+        onClick = onDeviceInfo,
+        onFirmwareFile = onFirmwareFile,
+      )
+      UsbBypassCard(isAvailable = isConnected, onBoardAction = onBoardAction)
+      RebootCard(isConnected = isConnected, isBootloader = isBootloader, onBoardAction = onBoardAction)
     }
-    ConnectionButton(state.connection, onConnect, onDisconnect)
-    DeviceInfoCard(
-      connection = state.connection,
-      firmware = state.firmware,
-      isUpdateAvailable = state.connection == ConnectionState.Connected ||
-        state.connection == ConnectionState.Bootloader,
-      onClick = onDeviceInfo,
-      onFirmwareFile = onFirmwareFile,
-    )
+  }
+}
+
+@Composable
+private fun UsbBypassCard(isAvailable: Boolean, onBoardAction: (BoardAction) -> Unit) {
+  Section(stringResource(R.string.section_usb_bypass)) {
+    FilledTonalButton(
+      onClick = { onBoardAction(BoardAction.UsbBypass) },
+      enabled = isAvailable,
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Text(stringResource(R.string.usb_bypass_enable))
+    }
+  }
+}
+
+@Composable
+private fun RebootCard(isConnected: Boolean, isBootloader: Boolean, onBoardAction: (BoardAction) -> Unit) {
+  Section(stringResource(R.string.section_reboot)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      FilledTonalButton(
+        onClick = { onBoardAction(BoardAction.Reboot) },
+        enabled = isConnected || isBootloader,
+        modifier = Modifier.weight(1f),
+      ) {
+        Text(stringResource(R.string.reboot_normal))
+      }
+      FilledTonalButton(
+        onClick = { onBoardAction(BoardAction.RebootToBootloader) },
+        enabled = isConnected,
+        modifier = Modifier.weight(1f),
+      ) {
+        Text(stringResource(R.string.reboot_dfu))
+      }
+    }
   }
 }
 

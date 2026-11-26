@@ -3,7 +3,8 @@ package com.drunkbatya.drunkheadphonesadapter
 import adapter.AudioStatusRequest
 import adapter.AudioStatusResponse
 import adapter.ErrType
-import adapter.RebootToBootloaderRequest
+import adapter.RebootMode
+import adapter.RebootRequest
 import adapter.RpcRequest
 import adapter.Settings
 import adapter.SettingsGetRequest
@@ -12,6 +13,7 @@ import adapter.SettingsSaveResult
 import adapter.SettingsSetRequest
 import adapter.SystemStatusRequest
 import adapter.SystemStatusResponse
+import adapter.UsbBypassRequest
 import adapter.UsbcStatusRequest
 import adapter.UsbcStatusResponse
 import adapter.VersionRequest
@@ -81,12 +83,26 @@ sealed interface UpdateState {
   data class Failed(@param:StringRes val title: Int, val reason: String) : UpdateState
 }
 
+enum class BoardAction {
+  UsbBypass,
+  Reboot,
+  RebootToBootloader,
+}
+
+sealed interface BoardActionState {
+  data class Confirm(val action: BoardAction) : BoardActionState
+  data class Running(val action: BoardAction) : BoardActionState
+  data class Failed(val action: BoardAction, val reason: String) : BoardActionState
+}
+
 class AdapterViewModel(application: Application) : AndroidViewModel(application) {
   private val usbManager = application.getSystemService(UsbManager::class.java)
   private val mutableState = MutableStateFlow(AdapterState())
   val state: StateFlow<AdapterState> = mutableState
   private val mutableUpdateState = MutableStateFlow<UpdateState?>(null)
   val updateState: StateFlow<UpdateState?> = mutableUpdateState
+  private val mutableBoardActionState = MutableStateFlow<BoardActionState?>(null)
+  val boardActionState: StateFlow<BoardActionState?> = mutableBoardActionState
   private val mutableConnectionError = MutableStateFlow<ConnectionError?>(null)
   val connectionError: StateFlow<ConnectionError?> = mutableConnectionError
   private val mutableSettingsSaveError = MutableStateFlow<String?>(null)
@@ -125,12 +141,13 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
 
   fun onAppHidden() {
     isAppVisible = false
-    if (!isUpdateRunning()) disconnect()
+    if (!isDeviceOperationRunning()) disconnect()
   }
 
-  private fun isUpdateRunning(): Boolean {
+  private fun isDeviceOperationRunning(): Boolean {
     val update = mutableUpdateState.value
-    return update is UpdateState.Writing || update is UpdateState.Rebooting
+    return update is UpdateState.Writing || update is UpdateState.Rebooting ||
+      mutableBoardActionState.value is BoardActionState.Running
   }
 
   fun dismissConnectionError() {
@@ -142,7 +159,7 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
   }
 
   private fun connect(isNotFoundReported: Boolean) {
-    if (mutableState.value.connection != ConnectionState.Disconnected || isUpdateRunning()) return
+    if (mutableState.value.connection != ConnectionState.Disconnected || isDeviceOperationRunning()) return
     viewModelScope.launch {
       val adapterDevice = findAdapterDevice(usbManager)
       val bootloader = findBootloaderDevice(usbManager)
@@ -293,6 +310,63 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
+  fun requestBoardAction(action: BoardAction) {
+    mutableBoardActionState.value = BoardActionState.Confirm(action)
+  }
+
+  fun dismissBoardAction() {
+    mutableBoardActionState.value = null
+  }
+
+  fun startBoardAction(action: BoardAction) {
+    val connectedAdapterLink = adapterLink
+    val connectedBootloader = bootloaderDevice
+    mutableBoardActionState.value = BoardActionState.Running(action)
+    viewModelScope.launch {
+      mutableBoardActionState.value = try {
+        when (action) {
+          BoardAction.UsbBypass -> enterUsbBypass(checkNotNull(connectedAdapterLink) { "Adapter not connected" })
+          BoardAction.Reboot -> if (connectedBootloader != null) {
+            rebootFromBootloader(connectedBootloader)
+          } else {
+            rebootAdapter(checkNotNull(connectedAdapterLink) { "Adapter not connected" })
+          }
+          BoardAction.RebootToBootloader ->
+            connectBootloader(rebootToBootloader(checkNotNull(connectedAdapterLink) { "Adapter not connected" }))
+        }
+        null
+      } catch (e: Exception) {
+        Log.e(TAG, "${action.name} failed: ${e.message}")
+        disconnect()
+        BoardActionState.Failed(action, e.message.orEmpty())
+      }
+    }
+  }
+
+  private suspend fun enterUsbBypass(link: AdapterLink) {
+    link.requestAndCheckOk("USB bypass", RpcRequest(usb_bypass = UsbBypassRequest()))
+    awaitDetached(link.device)
+    disconnect()
+  }
+
+  private suspend fun rebootAdapter(link: AdapterLink) {
+    link.requestAndCheckOk("Reboot", RpcRequest(reboot = RebootRequest(mode = RebootMode.REBOOT_MODE_NORMAL)))
+    awaitDetached(link.device)
+    disconnect()
+    val device = awaitAttached("Adapter") { findAdapterDevice(usbManager) }
+    connectAdapter(device) ?: throw IOException("Connect ${device.deviceName} after reboot failed")
+  }
+
+  private suspend fun rebootFromBootloader(device: UsbDevice) {
+    withContext(Dispatchers.IO) {
+      DfuDevice.open(usbManager, device).use { dfu ->
+        dfu.checkFirmwarePresent()
+        dfu.startFirmware()
+      }
+    }
+    awaitRestartedAdapter(device)
+  }
+
   suspend fun pollStatus(source: StatusSource) {
     val link = adapterLink ?: return
     var previousSystemStatus: SystemStatusResponse? = null
@@ -330,7 +404,9 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
 
   private fun reportConnectionError(@StringRes title: Int, reason: String) {
     Log.e(TAG, reason)
-    if (mutableUpdateState.value == null) mutableConnectionError.value = ConnectionError(title, reason)
+    if (mutableUpdateState.value == null && mutableBoardActionState.value == null) {
+      mutableConnectionError.value = ConnectionError(title, reason)
+    }
   }
 
   private suspend fun connectAdapter(device: UsbDevice): VersionResponse? {
@@ -372,7 +448,10 @@ class AdapterViewModel(application: Application) : AndroidViewModel(application)
   }
 
   private suspend fun rebootToBootloader(link: AdapterLink): UsbDevice {
-    link.requestAndCheckOk("Reboot to bootloader", RpcRequest(reboot_to_bootloader = RebootToBootloaderRequest()))
+    link.requestAndCheckOk(
+      "Reboot to bootloader",
+      RpcRequest(reboot = RebootRequest(mode = RebootMode.REBOOT_MODE_BOOTLOADER)),
+    )
     awaitDetached(link.device)
     disconnect()
     val device = awaitAttached("Bootloader") { findBootloaderDevice(usbManager) }

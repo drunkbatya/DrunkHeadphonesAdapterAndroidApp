@@ -9,6 +9,10 @@ private const val FLASH_ADDRESS = 0x08000000
 private const val FLASH_PAGE_SIZE = 2048
 private const val FLASH_PROGRAM_UNIT = 8
 private const val FLASH_ERASED_BYTE = 0xFF.toByte()
+private const val STACK_POINTER_SIZE = 4
+
+private const val RAM_ADDRESS = 0x20000000
+private const val RAM_SIZE = 144 * 1024
 
 private const val OPTION_BYTES_REGION = 1
 private const val OPTION_BYTES_ADDRESS = 0x1FFF7800
@@ -43,6 +47,15 @@ suspend fun DfuDevice.writeFirmware(image: ByteArray, onProgress: (Float) -> Uni
   if (!flashImage.contentEquals(image)) {
     erasePage(FLASH_ADDRESS)
     throw IOException("Flash content differs from image")
+  }
+}
+
+suspend fun DfuDevice.checkFirmwarePresent() {
+  selectMemoryRegion(FLASH_REGION)
+  returnToIdle()
+  val stackPointer = ByteBuffer.wrap(readMemory(FLASH_ADDRESS, STACK_POINTER_SIZE)).order(ByteOrder.LITTLE_ENDIAN).int
+  if (stackPointer !in RAM_ADDRESS + 1..RAM_ADDRESS + RAM_SIZE) {
+    throw IOException("Flash at 0x%08X: stack pointer 0x%08X".format(FLASH_ADDRESS, stackPointer))
   }
 }
 

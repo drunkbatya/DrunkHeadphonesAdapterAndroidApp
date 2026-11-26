@@ -42,11 +42,11 @@ fun UpdateDialogs(
       confirmButton = { TextButton(onClick = { onConfirm(update.image) }) { Text(stringResource(R.string.yes)) } },
       dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.no)) } },
     )
-    is UpdateState.Writing -> ProgressDialog {
+    is UpdateState.Writing -> ProgressDialog(stringResource(R.string.update_writing)) {
       LinearProgressIndicator(progress = { update.progress }, modifier = Modifier.fillMaxWidth())
       Text("${(update.progress * 100).toInt()} %")
     }
-    UpdateState.Rebooting -> ProgressDialog {
+    UpdateState.Rebooting -> ProgressDialog(stringResource(R.string.update_writing)) {
       CircularProgressIndicator()
       Text(stringResource(R.string.update_rebooting), textAlign = TextAlign.Center)
     }
@@ -60,7 +60,7 @@ fun UpdateDialogs(
 }
 
 @Composable
-private fun ProgressDialog(indicator: @Composable () -> Unit) {
+fun ProgressDialog(hint: String, indicator: @Composable () -> Unit) {
   val view = LocalView.current
   DisposableEffect(view) {
     view.keepScreenOn = true
@@ -78,7 +78,7 @@ private fun ProgressDialog(indicator: @Composable () -> Unit) {
       ) {
         indicator()
         Text(
-          stringResource(R.string.update_writing),
+          hint,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           textAlign = TextAlign.Center,
         )

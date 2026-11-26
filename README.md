@@ -7,6 +7,8 @@ Mobile optional! companion app for [DrunkHeadphonesAdapter](https://github.com/d
 - Update adapter firmware via DFU
 - Watch power and audio live data
 - Edit settings
+- Reboot the adapter into normal or DFU
+- Temporary USB bypass until the charger port device is unplugged
 
 ## Build
 ### Generate keystore
